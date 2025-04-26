@@ -1,0 +1,1590 @@
+Este es el programa desorganizado, debe ser organizado en funciones
+// y clases. El objetivo es que el código sea más legible y mantenible.
+
+using System;
+using System.Collections.Generic;
+using System.Data;
+using Microsoft.Data.SqlClient;
+
+namespace MinecraftManager
+{
+    // Modelos de datos
+    class Jugador
+    {
+        public int Id { get; set; }
+        public string Nombre { get; set; }
+        public int Nivel { get; set; }
+        public DateTime FechaCreacion { get; set; }
+
+        public override string ToString()
+        {
+            return $"ID: {Id}, Nombre: {Nombre}, Nivel: {Nivel}, Creado: {FechaCreacion.ToShortDateString()}";
+        }
+    }
+
+    class Bloque
+    {
+        public int Id { get; set; }
+        public string Nombre { get; set; }
+        public string Tipo { get; set; }
+        public string Rareza { get; set; }
+
+        public override string ToString()
+        {
+            return $"ID: {Id}, Nombre: {Nombre}, Tipo: {Tipo}, Rareza: {Rareza}";
+        }
+    }
+
+    class Inventario
+    {
+        public int Id { get; set; }
+        public int JugadorId { get; set; }
+        public int BloqueId { get; set; }
+        public int Cantidad { get; set; }
+        public string NombreJugador { get; set; }  // Para mostrar en reportes
+        public string NombreBloque { get; set; }   // Para mostrar en reportes
+
+        public override string ToString()
+        {
+            return $"ID: {Id}, Jugador: {NombreJugador}, Bloque: {NombreBloque}, Cantidad: {Cantidad}";
+        }
+    }
+
+    // Clase para la gestión de la conexión a la base de datos
+    class DatabaseManager
+    {
+        private readonly string _connectionString;
+
+        public DatabaseManager()
+        {
+            _connectionString = @"Data Source=LT-RULDIN-LENOV\SQLEXPRESS2019;Initial Catalog=dbparcial2;Integrated Security=True;TrustServerCertificate=True";
+        }
+
+        public SqlConnection GetConnection()
+        {
+            var connection = new SqlConnection(_connectionString);
+            return connection;
+        }
+
+        public bool TestConnection()
+        {
+            try
+            {
+                using var connection = GetConnection();
+                connection.Open();
+                return true;
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Error de conexión: {ex.Message}");
+                return false;
+            }
+        }
+    }
+
+    // Servicios para las entidades
+    class JugadorService
+    {
+        private readonly DatabaseManager _dbManager;
+
+        public JugadorService(DatabaseManager dbManager)
+        {
+            _dbManager = dbManager;
+        }
+
+        public void Crear(Jugador jugador)
+        {
+            try
+            {
+                using var connection = _dbManager.GetConnection();
+                connection.Open();
+                var command = new SqlCommand("INSERT INTO Jugadores (Nombre, Nivel) VALUES (@Nombre, @Nivel); SELECT SCOPE_IDENTITY();", connection);
+                command.Parameters.AddWithValue("@Nombre", jugador.Nombre);
+                command.Parameters.AddWithValue("@Nivel", jugador.Nivel);
+
+                // Obtener el ID generado
+                jugador.Id = Convert.ToInt32(command.ExecuteScalar());
+                Console.WriteLine($"¡Jugador registrado con ID: {jugador.Id}!");
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Error al crear jugador: {ex.Message}");
+                throw;
+            }
+        }
+
+        public List<Jugador> ObtenerTodos()
+        {
+            var jugadores = new List<Jugador>();
+            try
+            {
+                using var connection = _dbManager.GetConnection();
+                connection.Open();
+                var command = new SqlCommand("SELECT Id, Nombre, Nivel, FechaCreacion FROM Jugadores", connection);
+
+                using var reader = command.ExecuteReader();
+                while (reader.Read())
+                {
+                    jugadores.Add(new Jugador
+                    {
+                        Id = reader.GetInt32(0),
+                        Nombre = reader.GetString(1),
+                        Nivel = reader.GetInt32(2),
+                        FechaCreacion = reader.GetDateTime(3)
+                    });
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Error al obtener jugadores: {ex.Message}");
+            }
+            return jugadores;
+        }
+
+        public Jugador ObtenerPorId(int id)
+        {
+            try
+            {
+                using var connection = _dbManager.GetConnection();
+                connection.Open();
+                var command = new SqlCommand("SELECT Id, Nombre, Nivel, FechaCreacion FROM Jugadores WHERE Id = @Id", connection);
+                command.Parameters.AddWithValue("@Id", id);
+
+                using var reader = command.ExecuteReader();
+                if (reader.Read())
+                {
+                    return new Jugador
+                    {
+                        Id = reader.GetInt32(0),
+                        Nombre = reader.GetString(1),
+                        Nivel = reader.GetInt32(2),
+                        FechaCreacion = reader.GetDateTime(3)
+                    };
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Error al obtener jugador: {ex.Message}");
+            }
+            return null;
+        }
+
+        public void Actualizar(Jugador jugador)
+        {
+            try
+            {
+                using var connection = _dbManager.GetConnection();
+                connection.Open();
+                var command = new SqlCommand("UPDATE Jugadores SET Nombre = @Nombre, Nivel = @Nivel WHERE Id = @Id", connection);
+                command.Parameters.AddWithValue("@Id", jugador.Id);
+                command.Parameters.AddWithValue("@Nombre", jugador.Nombre);
+                command.Parameters.AddWithValue("@Nivel", jugador.Nivel);
+
+                int rowsAffected = command.ExecuteNonQuery();
+                if (rowsAffected > 0)
+                    Console.WriteLine($"¡Jugador actualizado con éxito!");
+                else
+                    Console.WriteLine("No se encontró el jugador para actualizar.");
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Error al actualizar jugador: {ex.Message}");
+            }
+        }
+
+        public void Eliminar(int id)
+        {
+            try
+            {
+                // Primero verificamos si el jugador tiene inventario
+                using var connection = _dbManager.GetConnection();
+                connection.Open();
+
+                // Verificar si el jugador tiene elementos en su inventario
+                var checkCommand = new SqlCommand("SELECT COUNT(*) FROM Inventario WHERE JugadorId = @Id", connection);
+                checkCommand.Parameters.AddWithValue("@Id", id);
+                int inventoryCount = Convert.ToInt32(checkCommand.ExecuteScalar());
+
+                if (inventoryCount > 0)
+                {
+                    Console.WriteLine("No se puede eliminar el jugador porque tiene elementos en su inventario.");
+                    Console.WriteLine($"Elimina primero los {inventoryCount} elementos del inventario asociados a este jugador.");
+                    return;
+                }
+
+                // Si no tiene inventario, procedemos a eliminar
+                var deleteCommand = new SqlCommand("DELETE FROM Jugadores WHERE Id = @Id", connection);
+                deleteCommand.Parameters.AddWithValue("@Id", id);
+
+                int rowsAffected = deleteCommand.ExecuteNonQuery();
+                if (rowsAffected > 0)
+                    Console.WriteLine($"¡Jugador eliminado con éxito!");
+                else
+                    Console.WriteLine("No se encontró el jugador para eliminar.");
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Error al eliminar jugador: {ex.Message}");
+            }
+        }
+    }
+
+    class BloqueService
+    {
+        private readonly DatabaseManager _dbManager;
+
+        public BloqueService(DatabaseManager dbManager)
+        {
+            _dbManager = dbManager;
+        }
+
+        public void Crear(Bloque bloque)
+        {
+            try
+            {
+                using var connection = _dbManager.GetConnection();
+                connection.Open();
+                var command = new SqlCommand("INSERT INTO Bloques (Nombre, Tipo, Rareza) VALUES (@Nombre, @Tipo, @Rareza); SELECT SCOPE_IDENTITY();", connection);
+                command.Parameters.AddWithValue("@Nombre", bloque.Nombre);
+                command.Parameters.AddWithValue("@Tipo", bloque.Tipo);
+                command.Parameters.AddWithValue("@Rareza", bloque.Rareza);
+
+                // Obtener el ID generado
+                bloque.Id = Convert.ToInt32(command.ExecuteScalar());
+                Console.WriteLine($"¡Bloque registrado con ID: {bloque.Id}!");
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Error al crear bloque: {ex.Message}");
+            }
+        }
+
+        public List<Bloque> ObtenerTodos()
+        {
+            var bloques = new List<Bloque>();
+            try
+            {
+                using var connection = _dbManager.GetConnection();
+                connection.Open();
+                var command = new SqlCommand("SELECT Id, Nombre, Tipo, Rareza FROM Bloques", connection);
+
+                using var reader = command.ExecuteReader();
+                while (reader.Read())
+                {
+                    bloques.Add(new Bloque
+                    {
+                        Id = reader.GetInt32(0),
+                        Nombre = reader.GetString(1),
+                        Tipo = reader.GetString(2),
+                        Rareza = reader.GetString(3)
+                    });
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Error al obtener bloques: {ex.Message}");
+            }
+            return bloques;
+        }
+
+        public List<Bloque> BuscarPorTipo(string tipo)
+        {
+            var bloques = new List<Bloque>();
+            try
+            {
+                using var connection = _dbManager.GetConnection();
+                connection.Open();
+                var command = new SqlCommand("SELECT Id, Nombre, Tipo, Rareza FROM Bloques WHERE Tipo LIKE @Tipo", connection);
+                command.Parameters.AddWithValue("@Tipo", "%" + tipo + "%");
+
+                using var reader = command.ExecuteReader();
+                while (reader.Read())
+                {
+                    bloques.Add(new Bloque
+                    {
+                        Id = reader.GetInt32(0),
+                        Nombre = reader.GetString(1),
+                        Tipo = reader.GetString(2),
+                        Rareza = reader.GetString(3)
+                    });
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Error al buscar bloques por tipo: {ex.Message}");
+            }
+            return bloques;
+        }
+
+        public List<Bloque> BuscarPorRareza(string rareza)
+        {
+            var bloques = new List<Bloque>();
+            try
+            {
+                using var connection = _dbManager.GetConnection();
+                connection.Open();
+                var command = new SqlCommand("SELECT Id, Nombre, Tipo, Rareza FROM Bloques WHERE Rareza LIKE @Rareza", connection);
+                command.Parameters.AddWithValue("@Rareza", "%" + rareza + "%");
+
+                using var reader = command.ExecuteReader();
+                while (reader.Read())
+                {
+                    bloques.Add(new Bloque
+                    {
+                        Id = reader.GetInt32(0),
+                        Nombre = reader.GetString(1),
+                        Tipo = reader.GetString(2),
+                        Rareza = reader.GetString(3)
+                    });
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Error al buscar bloques por rareza: {ex.Message}");
+            }
+            return bloques;
+        }
+
+        public Bloque ObtenerPorId(int id)
+        {
+            try
+            {
+                using var connection = _dbManager.GetConnection();
+                connection.Open();
+                var command = new SqlCommand("SELECT Id, Nombre, Tipo, Rareza FROM Bloques WHERE Id = @Id", connection);
+                command.Parameters.AddWithValue("@Id", id);
+
+                using var reader = command.ExecuteReader();
+                if (reader.Read())
+                {
+                    return new Bloque
+                    {
+                        Id = reader.GetInt32(0),
+                        Nombre = reader.GetString(1),
+                        Tipo = reader.GetString(2),
+                        Rareza = reader.GetString(3)
+                    };
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Error al obtener bloque: {ex.Message}");
+            }
+            return null;
+        }
+
+        public void Actualizar(Bloque bloque)
+        {
+            try
+            {
+                using var connection = _dbManager.GetConnection();
+                connection.Open();
+                var command = new SqlCommand("UPDATE Bloques SET Nombre = @Nombre, Tipo = @Tipo, Rareza = @Rareza WHERE Id = @Id", connection);
+                command.Parameters.AddWithValue("@Id", bloque.Id);
+                command.Parameters.AddWithValue("@Nombre", bloque.Nombre);
+                command.Parameters.AddWithValue("@Tipo", bloque.Tipo);
+                command.Parameters.AddWithValue("@Rareza", bloque.Rareza);
+
+                int rowsAffected = command.ExecuteNonQuery();
+                if (rowsAffected > 0)
+                    Console.WriteLine($"¡Bloque actualizado con éxito!");
+                else
+                    Console.WriteLine("No se encontró el bloque para actualizar.");
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Error al actualizar bloque: {ex.Message}");
+            }
+        }
+
+        public void Eliminar(int id)
+        {
+            try
+            {
+                using var connection = _dbManager.GetConnection();
+                connection.Open();
+
+                // Verificar si el bloque está en el inventario de algún jugador
+                var checkCommand = new SqlCommand("SELECT COUNT(*) FROM Inventario WHERE BloqueId = @Id", connection);
+                checkCommand.Parameters.AddWithValue("@Id", id);
+                int inventoryCount = Convert.ToInt32(checkCommand.ExecuteScalar());
+
+                if (inventoryCount > 0)
+                {
+                    Console.WriteLine("No se puede eliminar el bloque porque está presente en el inventario de jugadores.");
+                    Console.WriteLine($"Hay {inventoryCount} registros de inventario usando este bloque.");
+                    return;
+                }
+
+                // Si no hay referencias, proceder con la eliminación
+                var deleteCommand = new SqlCommand("DELETE FROM Bloques WHERE Id = @Id", connection);
+                deleteCommand.Parameters.AddWithValue("@Id", id);
+
+                int rowsAffected = deleteCommand.ExecuteNonQuery();
+                if (rowsAffected > 0)
+                    Console.WriteLine($"¡Bloque eliminado con éxito!");
+                else
+                    Console.WriteLine("No se encontró el bloque para eliminar.");
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Error al eliminar bloque: {ex.Message}");
+            }
+        }
+    }
+
+    class InventarioService
+    {
+        private readonly DatabaseManager _dbManager;
+        private readonly JugadorService _jugadorService;
+        private readonly BloqueService _bloqueService;
+
+        public InventarioService(DatabaseManager dbManager, JugadorService jugadorService, BloqueService bloqueService)
+        {
+            _dbManager = dbManager;
+            _jugadorService = jugadorService;
+            _bloqueService = bloqueService;
+        }
+
+        public void Agregar(Inventario inventario)
+        {
+            try
+            {
+                // Validar que la cantidad sea positiva
+                if (inventario.Cantidad <= 0)
+                {
+                    Console.WriteLine("Error: La cantidad debe ser un valor positivo.");
+                    return;
+                }
+
+                // Verificar que el jugador existe
+                var jugador = _jugadorService.ObtenerPorId(inventario.JugadorId);
+                if (jugador == null)
+                {
+                    Console.WriteLine($"Error: No existe un jugador con ID {inventario.JugadorId}");
+                    return;
+                }
+
+                // Verificar que el bloque existe
+                var bloque = _bloqueService.ObtenerPorId(inventario.BloqueId);
+                if (bloque == null)
+                {
+                    Console.WriteLine($"Error: No existe un bloque con ID {inventario.BloqueId}");
+                    return;
+                }
+
+                // Verificar si ya existe este bloque en el inventario del jugador
+                using var connection = _dbManager.GetConnection();
+                connection.Open();
+                var checkCommand = new SqlCommand(
+                    "SELECT Id, Cantidad FROM Inventario WHERE JugadorId = @JugadorId AND BloqueId = @BloqueId", connection);
+                checkCommand.Parameters.AddWithValue("@JugadorId", inventario.JugadorId);
+                checkCommand.Parameters.AddWithValue("@BloqueId", inventario.BloqueId);
+
+                using var reader = checkCommand.ExecuteReader();
+                if (reader.Read())
+                {
+                    // Ya existe, actualizamos la cantidad
+                    int existingId = reader.GetInt32(0);
+                    int existingCantidad = reader.GetInt32(1);
+                    reader.Close();
+
+                    var updateCommand = new SqlCommand(
+                        "UPDATE Inventario SET Cantidad = @Cantidad WHERE Id = @Id", connection);
+                    updateCommand.Parameters.AddWithValue("@Id", existingId);
+                    updateCommand.Parameters.AddWithValue("@Cantidad", existingCantidad + inventario.Cantidad);
+                    updateCommand.ExecuteNonQuery();
+
+                    Console.WriteLine($"¡Se actualizó el inventario! Nuevo total: {existingCantidad + inventario.Cantidad} {bloque.Nombre}");
+                }
+                else
+                {
+                    // No existe, creamos un nuevo registro
+                    reader.Close();
+                    var insertCommand = new SqlCommand(
+                        "INSERT INTO Inventario (JugadorId, BloqueId, Cantidad) VALUES (@JugadorId, @BloqueId, @Cantidad); SELECT SCOPE_IDENTITY();",
+                        connection);
+                    insertCommand.Parameters.AddWithValue("@JugadorId", inventario.JugadorId);
+                    insertCommand.Parameters.AddWithValue("@BloqueId", inventario.BloqueId);
+                    insertCommand.Parameters.AddWithValue("@Cantidad", inventario.Cantidad);
+
+                    inventario.Id = Convert.ToInt32(insertCommand.ExecuteScalar());
+                    Console.WriteLine($"¡Se agregó {inventario.Cantidad} {bloque.Nombre} al inventario de {jugador.Nombre}!");
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Error al agregar al inventario: {ex.Message}");
+            }
+        }
+
+        public List<Inventario> ObtenerTodos()
+        {
+            var inventarios = new List<Inventario>();
+            try
+            {
+                using var connection = _dbManager.GetConnection();
+                connection.Open();
+                var command = new SqlCommand(
+                    @"SELECT i.Id, i.JugadorId, i.BloqueId, i.Cantidad, j.Nombre AS NombreJugador, b.Nombre AS NombreBloque
+                    FROM Inventario i
+                    INNER JOIN Jugadores j ON i.JugadorId = j.Id
+                    INNER JOIN Bloques b ON i.BloqueId = b.Id", connection);
+
+                using var reader = command.ExecuteReader();
+                while (reader.Read())
+                {
+                    inventarios.Add(new Inventario
+                    {
+                        Id = reader.GetInt32(0),
+                        JugadorId = reader.GetInt32(1),
+                        BloqueId = reader.GetInt32(2),
+                        Cantidad = reader.GetInt32(3),
+                        NombreJugador = reader.GetString(4),
+                        NombreBloque = reader.GetString(5)
+                    });
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Error al obtener inventarios: {ex.Message}");
+            }
+            return inventarios;
+        }
+
+        public List<Inventario> ObtenerPorJugador(int jugadorId)
+        {
+            var inventarios = new List<Inventario>();
+            try
+            {
+                // Verificar que el jugador existe
+                var jugador = _jugadorService.ObtenerPorId(jugadorId);
+                if (jugador == null)
+                {
+                    Console.WriteLine($"Error: No existe un jugador con ID {jugadorId}");
+                    return inventarios;
+                }
+
+                using var connection = _dbManager.GetConnection();
+                connection.Open();
+                var command = new SqlCommand(
+                    @"SELECT i.Id, i.JugadorId, i.BloqueId, i.Cantidad, j.Nombre AS NombreJugador, b.Nombre AS NombreBloque
+                    FROM Inventario i
+                    INNER JOIN Jugadores j ON i.JugadorId = j.Id
+                    INNER JOIN Bloques b ON i.BloqueId = b.Id
+                    WHERE i.JugadorId = @JugadorId", connection);
+                command.Parameters.AddWithValue("@JugadorId", jugadorId);
+
+                using var reader = command.ExecuteReader();
+                while (reader.Read())
+                {
+                    inventarios.Add(new Inventario
+                    {
+                        Id = reader.GetInt32(0),
+                        JugadorId = reader.GetInt32(1),
+                        BloqueId = reader.GetInt32(2),
+                        Cantidad = reader.GetInt32(3),
+                        NombreJugador = reader.GetString(4),
+                        NombreBloque = reader.GetString(5)
+                    });
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Error al obtener inventario del jugador: {ex.Message}");
+            }
+            return inventarios;
+        }
+
+        public void Actualizar(Inventario inventario)
+        {
+            try
+            {
+                // Validar que la cantidad sea positiva
+                if (inventario.Cantidad <= 0)
+                {
+                    Console.WriteLine("Error: La cantidad debe ser un valor positivo.");
+                    return;
+                }
+
+                using var connection = _dbManager.GetConnection();
+                connection.Open();
+                var command = new SqlCommand("UPDATE Inventario SET Cantidad = @Cantidad WHERE Id = @Id", connection);
+                command.Parameters.AddWithValue("@Id", inventario.Id);
+                command.Parameters.AddWithValue("@Cantidad", inventario.Cantidad);
+
+                int rowsAffected = command.ExecuteNonQuery();
+                if (rowsAffected > 0)
+                    Console.WriteLine($"¡Inventario actualizado con éxito!");
+                else
+                    Console.WriteLine("No se encontró el registro de inventario para actualizar.");
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Error al actualizar inventario: {ex.Message}");
+            }
+        }
+
+        public void Eliminar(int id)
+        {
+            try
+            {
+                using var connection = _dbManager.GetConnection();
+                connection.Open();
+                var command = new SqlCommand("DELETE FROM Inventario WHERE Id = @Id", connection);
+                command.Parameters.AddWithValue("@Id", id);
+
+                int rowsAffected = command.ExecuteNonQuery();
+                if (rowsAffected > 0)
+                    Console.WriteLine($"¡Elemento del inventario eliminado con éxito!");
+                else
+                    Console.WriteLine("No se encontró el elemento del inventario para eliminar.");
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Error al eliminar de inventario: {ex.Message}");
+            }
+        }
+    }
+
+    // Clase principal del programa
+    class Program
+    {
+        private static DatabaseManager _dbManager;
+        private static JugadorService _jugadorService;
+        private static BloqueService _bloqueService;
+        private static InventarioService _inventarioService;
+
+        static void Main(string[] args)
+        {
+            Console.Title = "Sistema de Gestión de Minecraft";
+            Console.ForegroundColor = ConsoleColor.Green;
+
+            _dbManager = new DatabaseManager();
+            _jugadorService = new JugadorService(_dbManager);
+            _bloqueService = new BloqueService(_dbManager);
+            _inventarioService = new InventarioService(_dbManager, _jugadorService, _bloqueService);
+
+            // Verificar conexión a la base de datos
+            if (!_dbManager.TestConnection())
+            {
+                Console.WriteLine("No se pudo conectar a la base de datos. Verifique la conexión e intente nuevamente.");
+                Console.WriteLine("Presione cualquier tecla para salir...");
+                Console.ReadKey();
+                return;
+            }
+
+            Console.WriteLine("Conexión a la base de datos establecida correctamente.");
+            MostrarMenuPrincipal();
+        }
+
+        static void MostrarMenuPrincipal()
+        {
+            bool salir = false;
+
+            while (!salir)
+            {
+                Console.Clear();
+                MostrarEncabezado("SISTEMA DE GESTIÓN DE MINECRAFT");
+
+                Console.WriteLine("\nMENÚ PRINCIPAL:");
+                Console.WriteLine("1. Gestionar Jugadores");
+                Console.WriteLine("2. Gestionar Bloques");
+                Console.WriteLine("3. Gestionar Inventario");
+                Console.WriteLine("4. Salir");
+
+                Console.Write("\nSeleccione una opción: ");
+                string opcion = Console.ReadLine();
+
+                switch (opcion)
+                {
+                    case "1":
+                        MenuJugadores();
+                        break;
+
+                    case "2":
+                        MenuBloques();
+                        break;
+
+                    case "3":
+                        MenuInventario();
+                        break;
+
+                    case "4":
+                        salir = true;
+                        Console.WriteLine("\n¡Gracias por usar el Sistema de Gestión de Minecraft!");
+                        break;
+
+                    default:
+                        Console.WriteLine("\nOpción no válida. Presione cualquier tecla para continuar...");
+                        Console.ReadKey();
+                        break;
+                }
+            }
+        }
+
+        // Menú para la gestión de jugadores
+        static void MenuJugadores()
+        {
+            bool volver = false;
+
+            while (!volver)
+            {
+                Console.Clear();
+                MostrarEncabezado("GESTIÓN DE JUGADORES");
+
+                Console.WriteLine("\nOPCIONES DISPONIBLES:");
+                Console.WriteLine("1. Registrar nuevo jugador");
+                Console.WriteLine("2. Listar todos los jugadores");
+                Console.WriteLine("3. Buscar jugador por ID");
+                Console.WriteLine("4. Actualizar jugador");
+                Console.WriteLine("5. Eliminar jugador");
+                Console.WriteLine("6. Volver al menú principal");
+
+                Console.Write("\nSeleccione una opción: ");
+                string opcion = Console.ReadLine();
+
+                switch (opcion)
+                {
+                    case "1":
+                        RegistrarJugador();
+                        break;
+
+                    case "2":
+                        ListarJugadores();
+                        break;
+
+                    case "3":
+                        BuscarJugadorPorId();
+                        break;
+
+                    case "4":
+                        ActualizarJugador();
+                        break;
+
+                    case "5":
+                        EliminarJugador();
+                        break;
+
+                    case "6":
+                        volver = true;
+                        break;
+
+                    default:
+                        Console.WriteLine("\nOpción no válida. Presione cualquier tecla para continuar...");
+                        Console.ReadKey();
+                        break;
+                }
+            }
+        }
+
+        // Menú para la gestión de bloques
+        static void MenuBloques()
+        {
+            bool volver = false;
+
+            while (!volver)
+            {
+                Console.Clear();
+                MostrarEncabezado("GESTIÓN DE BLOQUES");
+
+                Console.WriteLine("\nOPCIONES DISPONIBLES:");
+                Console.WriteLine("1. Registrar nuevo bloque");
+                Console.WriteLine("2. Listar todos los bloques");
+                Console.WriteLine("3. Buscar bloque por ID");
+                Console.WriteLine("4. Buscar bloques por tipo");
+                Console.WriteLine("5. Buscar bloques por rareza");
+                Console.WriteLine("6. Actualizar bloque");
+                Console.WriteLine("7. Eliminar bloque");
+                Console.WriteLine("8. Volver al menú principal");
+
+                Console.Write("\nSeleccione una opción: ");
+                string opcion = Console.ReadLine();
+
+                switch (opcion)
+                {
+                    case "1":
+                        RegistrarBloque();
+                        break;
+
+                    case "2":
+                        ListarBloques();
+                        break;
+
+                    case "3":
+                        BuscarBloquePorId();
+                        break;
+
+                    case "4":
+                        BuscarBloquePorTipo();
+                        break;
+
+                    case "5":
+                        BuscarBloquePorRareza();
+                        break;
+
+                    case "6":
+                        ActualizarBloque();
+                        break;
+
+                    case "7":
+                        EliminarBloque();
+                        break;
+
+                    case "8":
+                        volver = true;
+                        break;
+
+                    default:
+                        Console.WriteLine("\nOpción no válida. Presione cualquier tecla para continuar...");
+                        Console.ReadKey();
+                        break;
+                }
+            }
+        }
+
+        // Menú para la gestión de inventario
+        static void MenuInventario()
+        {
+            bool volver = false;
+
+            while (!volver)
+            {
+                Console.Clear();
+                MostrarEncabezado("GESTIÓN DE INVENTARIO");
+
+                Console.WriteLine("\nOPCIONES DISPONIBLES:");
+                Console.WriteLine("1. Agregar bloques al inventario");
+                Console.WriteLine("2. Listar todo el inventario");
+                Console.WriteLine("3. Ver inventario de un jugador");
+                Console.WriteLine("4. Actualizar cantidad en inventario");
+                Console.WriteLine("5. Eliminar elemento del inventario");
+                Console.WriteLine("6. Volver al menú principal");
+
+                Console.Write("\nSeleccione una opción: ");
+                string opcion = Console.ReadLine();
+
+                switch (opcion)
+                {
+                    case "1":
+                        AgregarAInventario();
+                        break;
+
+                    case "2":
+                        ListarInventario();
+                        break;
+
+                    case "3":
+                        VerInventarioJugador();
+                        break;
+
+                    case "4":
+                        ActualizarInventario();
+                        break;
+
+                    case "5":
+                        EliminarDeInventario();
+                        break;
+
+                    case "6":
+                        volver = true;
+                        break;
+
+                    default:
+                        Console.WriteLine("\nOpción no válida. Presione cualquier tecla para continuar...");
+                        Console.ReadKey();
+                        break;
+                }
+            }
+        }
+
+        // Funciones para Jugadores
+        static void RegistrarJugador()
+        {
+            Console.Clear();
+            MostrarEncabezado("REGISTRAR NUEVO JUGADOR");
+
+            var jugador = new Jugador();
+
+            Console.Write("\nNombre del jugador: ");
+            jugador.Nombre = Console.ReadLine();
+
+            Console.Write("Nivel inicial (deje en blanco para nivel 1): ");
+            string nivelStr = Console.ReadLine();
+            jugador.Nivel = string.IsNullOrEmpty(nivelStr) ? 1 : int.Parse(nivelStr);
+
+            try
+            {
+                _jugadorService.Crear(jugador);
+                Console.WriteLine("\n¡Jugador registrado con éxito!");
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"\nError al registrar el jugador: {ex.Message}");
+            }
+
+            Console.WriteLine("\nPresione cualquier tecla para continuar...");
+            Console.ReadKey();
+        }
+
+        static void ListarJugadores()
+        {
+            Console.Clear();
+            MostrarEncabezado("LISTA DE JUGADORES");
+
+            var jugadores = _jugadorService.ObtenerTodos();
+
+            if (jugadores.Count == 0)
+            {
+                Console.WriteLine("\nNo hay jugadores registrados.");
+            }
+            else
+            {
+                Console.WriteLine("\nJUGADORES REGISTRADOS:");
+                foreach (var jugador in jugadores)
+                {
+                    Console.WriteLine(jugador);
+                }
+                Console.WriteLine($"\nTotal de jugadores: {jugadores.Count}");
+            }
+
+            Console.WriteLine("\nPresione cualquier tecla para continuar...");
+            Console.ReadKey();
+        }
+
+        static void BuscarJugadorPorId()
+        {
+            Console.Clear();
+            MostrarEncabezado("BUSCAR JUGADOR POR ID");
+
+            Console.Write("\nIngrese el ID del jugador: ");
+            if (int.TryParse(Console.ReadLine(), out int id))
+            {
+                var jugador = _jugadorService.ObtenerPorId(id);
+
+                if (jugador != null)
+                {
+                    Console.WriteLine("\nJugador encontrado:");
+                    Console.WriteLine(jugador);
+
+                    // Mostrar inventario del jugador
+                    var inventario = _inventarioService.ObtenerPorJugador(jugador.Id);
+                    if (inventario.Count > 0)
+                    {
+                        Console.WriteLine("\nInventario del jugador:");
+                        foreach (var item in inventario)
+                        {
+                            Console.WriteLine($"- {item.Cantidad} {item.NombreBloque}");
+                        }
+                    }
+                    else
+                    {
+                        Console.WriteLine("\nEste jugador no tiene bloques en su inventario.");
+                    }
+                }
+                else
+                {
+                    Console.WriteLine($"\nNo se encontró un jugador con ID {id}.");
+                }
+            }
+            else
+            {
+                Console.WriteLine("\nID inválido.");
+            }
+
+            Console.WriteLine("\nPresione cualquier tecla para continuar...");
+            Console.ReadKey();
+        }
+
+        static void ActualizarJugador()
+        {
+            Console.Clear();
+            MostrarEncabezado("ACTUALIZAR JUGADOR");
+
+            Console.Write("\nIngrese el ID del jugador a actualizar: ");
+            if (int.TryParse(Console.ReadLine(), out int id))
+            {
+                var jugador = _jugadorService.ObtenerPorId(id);
+
+                if (jugador != null)
+                {
+                    Console.WriteLine("\nJugador encontrado:");
+                    Console.WriteLine(jugador);
+
+                    Console.WriteLine("\nIngrese los nuevos datos (deje en blanco para mantener el valor actual):");
+
+                    Console.Write($"Nombre ({jugador.Nombre}): ");
+                    string nombre = Console.ReadLine();
+                    if (!string.IsNullOrEmpty(nombre))
+                        jugador.Nombre = nombre;
+
+                    Console.Write($"Nivel ({jugador.Nivel}): ");
+                    string nivelStr = Console.ReadLine();
+                    if (!string.IsNullOrEmpty(nivelStr) && int.TryParse(nivelStr, out int nivel))
+                        jugador.Nivel = nivel;
+
+                    _jugadorService.Actualizar(jugador);
+                    Console.WriteLine("\n¡Jugador actualizado con éxito!");
+                }
+                else
+                {
+                    Console.WriteLine($"\nNo se encontró un jugador con ID {id}.");
+                }
+            }
+            else
+            {
+                Console.WriteLine("\nID inválido.");
+            }
+
+            Console.WriteLine("\nPresione cualquier tecla para continuar...");
+            Console.ReadKey();
+        }
+
+        static void EliminarJugador()
+        {
+            Console.Clear();
+            MostrarEncabezado("ELIMINAR JUGADOR");
+
+            Console.Write("\nIngrese el ID del jugador a eliminar: ");
+            if (int.TryParse(Console.ReadLine(), out int id))
+            {
+                var jugador = _jugadorService.ObtenerPorId(id);
+
+                if (jugador != null)
+                {
+                    Console.WriteLine("\nJugador a eliminar:");
+                    Console.WriteLine(jugador);
+
+                    Console.Write("\n¿Está seguro de eliminar este jugador? (S/N): ");
+                    if (Console.ReadLine().ToUpper() == "S")
+                    {
+                        _jugadorService.Eliminar(id);
+                    }
+                    else
+                    {
+                        Console.WriteLine("\nOperación cancelada.");
+                    }
+                }
+                else
+                {
+                    Console.WriteLine($"\nNo se encontró un jugador con ID {id}.");
+                }
+            }
+            else
+            {
+                Console.WriteLine("\nID inválido.");
+            }
+
+            Console.WriteLine("\nPresione cualquier tecla para continuar...");
+            Console.ReadKey();
+        }
+
+        // Funciones para Bloques
+        static void RegistrarBloque()
+        {
+            Console.Clear();
+            MostrarEncabezado("REGISTRAR NUEVO BLOQUE");
+
+            var bloque = new Bloque();
+
+            Console.Write("\nNombre del bloque: ");
+            bloque.Nombre = Console.ReadLine();
+
+            Console.Write("Tipo (Mineral, Madera, Piedra, Decoración, etc.): ");
+            bloque.Tipo = Console.ReadLine();
+
+            Console.Write("Rareza (Común, Raro, Épico, Legendario, etc.): ");
+            bloque.Rareza = Console.ReadLine();
+
+            _bloqueService.Crear(bloque);
+
+            Console.WriteLine("\nPresione cualquier tecla para continuar...");
+            Console.ReadKey();
+        }
+
+        static void ListarBloques()
+        {
+            Console.Clear();
+            MostrarEncabezado("LISTA DE BLOQUES");
+
+            var bloques = _bloqueService.ObtenerTodos();
+
+            if (bloques.Count == 0)
+            {
+                Console.WriteLine("\nNo hay bloques registrados.");
+            }
+            else
+            {
+                Console.WriteLine("\nBLOQUES REGISTRADOS:");
+                foreach (var bloque in bloques)
+                {
+                    Console.WriteLine(bloque);
+                }
+                Console.WriteLine($"\nTotal de bloques: {bloques.Count}");
+            }
+
+            Console.WriteLine("\nPresione cualquier tecla para continuar...");
+            Console.ReadKey();
+        }
+
+        static void BuscarBloquePorId()
+        {
+            Console.Clear();
+            MostrarEncabezado("BUSCAR BLOQUE POR ID");
+
+            Console.Write("\nIngrese el ID del bloque: ");
+            if (int.TryParse(Console.ReadLine(), out int id))
+            {
+                var bloque = _bloqueService.ObtenerPorId(id);
+
+                if (bloque != null)
+                {
+                    Console.WriteLine("\nBloque encontrado:");
+                    Console.WriteLine(bloque);
+                }
+                else
+                {
+                    Console.WriteLine($"\nNo se encontró un bloque con ID {id}.");
+                }
+            }
+            else
+            {
+                Console.WriteLine("\nID inválido.");
+            }
+
+            Console.WriteLine("\nPresione cualquier tecla para continuar...");
+            Console.ReadKey();
+        }
+
+        static void BuscarBloquePorTipo()
+        {
+            Console.Clear();
+            MostrarEncabezado("BUSCAR BLOQUES POR TIPO");
+
+            Console.Write("\nIngrese el tipo de bloque a buscar: ");
+            string tipo = Console.ReadLine();
+
+            var bloques = _bloqueService.BuscarPorTipo(tipo);
+
+            if (bloques.Count == 0)
+            {
+                Console.WriteLine($"\nNo se encontraron bloques del tipo '{tipo}'.");
+            }
+            else
+            {
+                Console.WriteLine($"\nBloques encontrados del tipo '{tipo}':");
+                foreach (var bloque in bloques)
+                {
+                    Console.WriteLine(bloque);
+                }
+                Console.WriteLine($"\nTotal de bloques encontrados: {bloques.Count}");
+            }
+
+            Console.WriteLine("\nPresione cualquier tecla para continuar...");
+            Console.ReadKey();
+        }
+
+        static void BuscarBloquePorRareza()
+        {
+            Console.Clear();
+            MostrarEncabezado("BUSCAR BLOQUES POR RAREZA");
+
+            Console.Write("\nIngrese la rareza de bloque a buscar: ");
+            string rareza = Console.ReadLine();
+
+            var bloques = _bloqueService.BuscarPorRareza(rareza);
+
+            if (bloques.Count == 0)
+            {
+                Console.WriteLine($"\nNo se encontraron bloques con rareza '{rareza}'.");
+            }
+            else
+            {
+                Console.WriteLine($"\nBloques encontrados con rareza '{rareza}':");
+                foreach (var bloque in bloques)
+                {
+                    Console.WriteLine(bloque);
+                }
+                Console.WriteLine($"\nTotal de bloques encontrados: {bloques.Count}");
+            }
+
+            Console.WriteLine("\nPresione cualquier tecla para continuar...");
+            Console.ReadKey();
+        }
+
+        static void ActualizarBloque()
+        {
+            Console.Clear();
+            MostrarEncabezado("ACTUALIZAR BLOQUE");
+
+            Console.Write("\nIngrese el ID del bloque a actualizar: ");
+            if (int.TryParse(Console.ReadLine(), out int id))
+            {
+                var bloque = _bloqueService.ObtenerPorId(id);
+
+                if (bloque != null)
+                {
+                    Console.WriteLine("\nBloque encontrado:");
+                    Console.WriteLine(bloque);
+
+                    Console.WriteLine("\nIngrese los nuevos datos (deje en blanco para mantener el valor actual):");
+
+                    Console.Write($"Nombre ({bloque.Nombre}): ");
+                    string nombre = Console.ReadLine();
+                    if (!string.IsNullOrEmpty(nombre))
+                        bloque.Nombre = nombre;
+
+                    Console.Write($"Tipo ({bloque.Tipo}): ");
+                    string tipo = Console.ReadLine();
+                    if (!string.IsNullOrEmpty(tipo))
+                        bloque.Tipo = tipo;
+
+                    Console.Write($"Rareza ({bloque.Rareza}): ");
+                    string rareza = Console.ReadLine();
+                    if (!string.IsNullOrEmpty(rareza))
+                        bloque.Rareza = rareza;
+
+                    _bloqueService.Actualizar(bloque);
+                }
+                else
+                {
+                    Console.WriteLine($"\nNo se encontró un bloque con ID {id}.");
+                }
+            }
+            else
+            {
+                Console.WriteLine("\nID inválido.");
+            }
+
+            Console.WriteLine("\nPresione cualquier tecla para continuar...");
+            Console.ReadKey();
+        }
+
+        static void EliminarBloque()
+        {
+            Console.Clear();
+            MostrarEncabezado("ELIMINAR BLOQUE");
+
+            Console.Write("\nIngrese el ID del bloque a eliminar: ");
+            if (int.TryParse(Console.ReadLine(), out int id))
+            {
+                var bloque = _bloqueService.ObtenerPorId(id);
+
+                if (bloque != null)
+                {
+                    Console.WriteLine("\nBloque a eliminar:");
+                    Console.WriteLine(bloque);
+
+                    Console.Write("\n¿Está seguro de eliminar este bloque? (S/N): ");
+                    if (Console.ReadLine().ToUpper() == "S")
+                    {
+                        _bloqueService.Eliminar(id);
+                    }
+                    else
+                    {
+                        Console.WriteLine("\nOperación cancelada.");
+                    }
+                }
+                else
+                {
+                    Console.WriteLine($"\nNo se encontró un bloque con ID {id}.");
+                }
+            }
+            else
+            {
+                Console.WriteLine("\nID inválido.");
+            }
+
+            Console.WriteLine("\nPresione cualquier tecla para continuar...");
+            Console.ReadKey();
+        }
+
+        // Funciones para Inventario
+        static void AgregarAInventario()
+        {
+            Console.Clear();
+            MostrarEncabezado("AGREGAR BLOQUES AL INVENTARIO");
+
+            // Primero mostramos la lista de jugadores
+            var jugadores = _jugadorService.ObtenerTodos();
+            if (jugadores.Count == 0)
+            {
+                Console.WriteLine("\nNo hay jugadores registrados. Primero debe registrar un jugador.");
+                Console.WriteLine("\nPresione cualquier tecla para continuar...");
+                Console.ReadKey();
+                return;
+            }
+
+            Console.WriteLine("\nJUGADORES DISPONIBLES:");
+            foreach (var jugador in jugadores)
+            {
+                Console.WriteLine($"{jugador.Id}. {jugador.Nombre}");
+            }
+
+            Console.Write("\nSeleccione el ID del jugador: ");
+            if (!int.TryParse(Console.ReadLine(), out int jugadorId) || _jugadorService.ObtenerPorId(jugadorId) == null)
+            {
+                Console.WriteLine("\nID de jugador inválido.");
+                Console.WriteLine("\nPresione cualquier tecla para continuar...");
+                Console.ReadKey();
+                return;
+            }
+
+            // Luego mostramos la lista de bloques
+            var bloques = _bloqueService.ObtenerTodos();
+            if (bloques.Count == 0)
+            {
+                Console.WriteLine("\nNo hay bloques registrados. Primero debe registrar un bloque.");
+                Console.WriteLine("\nPresione cualquier tecla para continuar...");
+                Console.ReadKey();
+                return;
+            }
+
+            Console.WriteLine("\nBLOQUES DISPONIBLES:");
+            foreach (var bloque in bloques)
+            {
+                Console.WriteLine($"{bloque.Id}. {bloque.Nombre} (Tipo: {bloque.Tipo}, Rareza: {bloque.Rareza})");
+            }
+
+            Console.Write("\nSeleccione el ID del bloque: ");
+            if (!int.TryParse(Console.ReadLine(), out int bloqueId) || _bloqueService.ObtenerPorId(bloqueId) == null)
+            {
+                Console.WriteLine("\nID de bloque inválido.");
+                Console.WriteLine("\nPresione cualquier tecla para continuar...");
+                Console.ReadKey();
+                return;
+            }
+
+            Console.Write("\nCantidad a agregar: ");
+            if (!int.TryParse(Console.ReadLine(), out int cantidad) || cantidad <= 0)
+            {
+                Console.WriteLine("\nCantidad inválida. Debe ser un número positivo.");
+                Console.WriteLine("\nPresione cualquier tecla para continuar...");
+                Console.ReadKey();
+                return;
+            }
+
+            var inventario = new Inventario
+            {
+                JugadorId = jugadorId,
+                BloqueId = bloqueId,
+                Cantidad = cantidad
+            };
+
+            _inventarioService.Agregar(inventario);
+
+            Console.WriteLine("\nPresione cualquier tecla para continuar...");
+            Console.ReadKey();
+        }
+
+        static void ListarInventario()
+        {
+            Console.Clear();
+            MostrarEncabezado("LISTA COMPLETA DE INVENTARIO");
+
+            var inventarios = _inventarioService.ObtenerTodos();
+
+            if (inventarios.Count == 0)
+            {
+                Console.WriteLine("\nNo hay elementos en el inventario.");
+            }
+            else
+            {
+                Console.WriteLine("\nELEMENTOS EN INVENTARIO:");
+                foreach (var inventario in inventarios)
+                {
+                    Console.WriteLine($"Jugador: {inventario.NombreJugador} - Bloque: {inventario.NombreBloque} - Cantidad: {inventario.Cantidad}");
+                }
+                Console.WriteLine($"\nTotal de registros de inventario: {inventarios.Count}");
+            }
+
+            Console.WriteLine("\nPresione cualquier tecla para continuar...");
+            Console.ReadKey();
+        }
+
+        static void VerInventarioJugador()
+        {
+            Console.Clear();
+            MostrarEncabezado("VER INVENTARIO DE JUGADOR");
+
+            // Mostrar lista de jugadores
+            var jugadores = _jugadorService.ObtenerTodos();
+            if (jugadores.Count == 0)
+            {
+                Console.WriteLine("\nNo hay jugadores registrados.");
+                Console.WriteLine("\nPresione cualquier tecla para continuar...");
+                Console.ReadKey();
+                return;
+            }
+
+            Console.WriteLine("\nJUGADORES DISPONIBLES:");
+            foreach (var jugador in jugadores)
+            {
+                Console.WriteLine($"{jugador.Id}. {jugador.Nombre}");
+            }
+
+            Console.Write("\nSeleccione el ID del jugador: ");
+            if (int.TryParse(Console.ReadLine(), out int jugadorId))
+            {
+                var jugador = _jugadorService.ObtenerPorId(jugadorId);
+
+                if (jugador != null)
+                {
+                    Console.WriteLine($"\nInventario de {jugador.Nombre} (Nivel {jugador.Nivel}):");
+
+                    var inventario = _inventarioService.ObtenerPorJugador(jugadorId);
+
+                    if (inventario.Count == 0)
+                    {
+                        Console.WriteLine("\nEste jugador no tiene bloques en su inventario.");
+                    }
+                    else
+                    {
+                        foreach (var item in inventario)
+                        {
+                            Console.WriteLine($"- {item.Cantidad} {item.NombreBloque}");
+                        }
+
+                        // Sumar el total de bloques
+                        int totalBloques = inventario.Sum(i => i.Cantidad);
+                        Console.WriteLine($"\nTotal de bloques: {totalBloques}");
+                        Console.WriteLine($"Total de tipos de bloques: {inventario.Count}");
+                    }
+                }
+                else
+                {
+                    Console.WriteLine($"\nNo se encontró un jugador con ID {jugadorId}.");
+                }
+            }
+            else
+            {
+                Console.WriteLine("\nID inválido.");
+            }
+
+            Console.WriteLine("\nPresione cualquier tecla para continuar...");
+            Console.ReadKey();
+        }
+
+        static void ActualizarInventario()
+        {
+            Console.Clear();
+            MostrarEncabezado("ACTUALIZAR CANTIDAD EN INVENTARIO");
+
+            var inventarios = _inventarioService.ObtenerTodos();
+
+            if (inventarios.Count == 0)
+            {
+                Console.WriteLine("\nNo hay elementos en el inventario.");
+                Console.WriteLine("\nPresione cualquier tecla para continuar...");
+                Console.ReadKey();
+                return;
+            }
+
+            Console.WriteLine("\nELEMENTOS EN INVENTARIO:");
+            foreach (var inv in inventarios)
+            {
+                Console.WriteLine($"ID: {inv.Id} - Jugador: {inv.NombreJugador} - Bloque: {inv.NombreBloque} - Cantidad: {inv.Cantidad}");
+            }
+
+            Console.Write("\nIngrese el ID del registro a actualizar: ");
+            if (int.TryParse(Console.ReadLine(), out int id))
+            {
+                // Buscar el inventario
+                var inventario = inventarios.FirstOrDefault(i => i.Id == id);
+
+                if (inventario != null)
+                {
+                    Console.WriteLine($"\nVa a actualizar: {inventario.NombreJugador} - {inventario.NombreBloque} - Cantidad actual: {inventario.Cantidad}");
+
+                    Console.Write("\nNueva cantidad: ");
+                    if (int.TryParse(Console.ReadLine(), out int nuevaCantidad) && nuevaCantidad > 0)
+                    {
+                        inventario.Cantidad = nuevaCantidad;
+                        _inventarioService.Actualizar(inventario);
+                    }
+                    else
+                    {
+                        Console.WriteLine("\nCantidad inválida. Debe ser un número positivo.");
+                    }
+                }
+                else
+                {
+                    Console.WriteLine($"\nNo se encontró un registro de inventario con ID {id}.");
+                }
+            }
+            else
+            {
+                Console.WriteLine("\nID inválido.");
+            }
+
+            Console.WriteLine("\nPresione cualquier tecla para continuar...");
+            Console.ReadKey();
+        }
+
+        static void EliminarDeInventario()
+        {
+            Console.Clear();
+            MostrarEncabezado("ELIMINAR ELEMENTO DEL INVENTARIO");
+
+            var inventarios = _inventarioService.ObtenerTodos();
+
+            if (inventarios.Count == 0)
+            {
+                Console.WriteLine("\nNo hay elementos en el inventario.");
+                Console.WriteLine("\nPresione cualquier tecla para continuar...");
+                Console.ReadKey();
+                return;
+            }
+
+            Console.WriteLine("\nELEMENTOS EN INVENTARIO:");
+            foreach (var inv in inventarios)
+            {
+                Console.WriteLine($"ID: {inv.Id} - Jugador: {inv.NombreJugador} - Bloque: {inv.NombreBloque} - Cantidad: {inv.Cantidad}");
+            }
+
+            Console.Write("\nIngrese el ID del registro a eliminar: ");
+            if (int.TryParse(Console.ReadLine(), out int id))
+            {
+                // Buscar el inventario
+                var inventario = inventarios.FirstOrDefault(i => i.Id == id);
+
+                if (inventario != null)
+                {
+                    Console.WriteLine($"\nVa a eliminar: {inventario.NombreJugador} - {inventario.NombreBloque} - Cantidad: {inventario.Cantidad}");
+
+                    Console.Write("\n¿Está seguro de eliminar este registro del inventario? (S/N): ");
+                    if (Console.ReadLine().ToUpper() == "S")
+                    {
+                        _inventarioService.Eliminar(id);
+                    }
+                    else
+                    {
+                        Console.WriteLine("\nOperación cancelada.");
+                    }
+                }
+                else
+                {
+                    Console.WriteLine($"\nNo se encontró un registro de inventario con ID {id}.");
+                }
+            }
+            else
+            {
+                Console.WriteLine("\nID inválido.");
+            }
+
+            Console.WriteLine("\nPresione cualquier tecla para continuar...");
+            Console.ReadKey();
+        }
+
+        // Función para mostrar encabezados con estilo
+        static void MostrarEncabezado(string titulo)
+        {
+            string borde = new string('=', titulo.Length + 10);
+
+            Console.WriteLine(borde);
+            Console.WriteLine($"    {titulo}    ");
+            Console.WriteLine(borde);
+        }
+    }
+}
+
